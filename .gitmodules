@@ -1,0 +1,3 @@
+[submodule "deps/libdill"]
+	path = deps/libdill
+	url = https://github.com/sustrik/libdill.git
