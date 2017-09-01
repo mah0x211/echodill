@@ -20,7 +20,7 @@ all: preprocess $(TARGET)
 	$(CC) $(CFLAGS) $(WARNINGS) $(CPPFLAGS) -Ideps/libdill -o $@ -c $<
 
 $(TARGET): $(OBJS)
-	$(CC) -o $@ $^ deps/libdill/.libs/libdill.a
+	$(CC) -o $@ $^ deps/libdill/.libs/libdill.a -lpthread
 
 preprocess:
 	cd ./deps/libdill; \
