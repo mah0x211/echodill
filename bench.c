@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <string.h>
 #include <errno.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -15,10 +16,13 @@
 #define DEFAULT_NPROC   1
 #define DEFAULT_NCONN   100
 #define DEFAULT_NMSG    5000
+#define DEFAULT_MSGLEN  6
 
 
 static const int B_ERROR = -1;
 static const int B_READY = -2;
+static char *MESSAGE = NULL;
+static size_t MESSAGELEN = DEFAULT_MSGLEN;
 
 
 typedef struct {
@@ -66,13 +70,17 @@ static inline int newch( size_t bytes )
 
 coroutine void client(int out, int trg, struct ipaddr *addr, int nmsg)
 {
-    int s = tcp_connect(addr, -1);
+    int s = 0;
     int sent = 0;
     int val = 0;
-    char buf[BUFSIZ];
-    int sender = 0;
+    char *buf = malloc(sizeof(char) * MESSAGELEN);
 
-    if(s == -1) {
+    if(!buf){
+        log("failed to malloc()");
+        chsend(out, (void*)&B_ERROR, sizeof(int), -1);
+        return;
+    }
+    else if((s = tcp_connect(addr, -1)) == -1){
         log("failed to tcp_connect()");
         chsend(out, (void*)&B_ERROR, sizeof(int), -1);
         return;
@@ -93,14 +101,13 @@ coroutine void client(int out, int trg, struct ipaddr *addr, int nmsg)
     // send echo messages
     for(int i = 0; i < nmsg; i++)
     {
-        if(bsend(s, "hello\n", 6, -1) == -1){
+        if(bsend(s, MESSAGE, MESSAGELEN, -1) == -1){
             log("failed to bsend()");
             break;
         }
 
-        if(brecv(s, buf, 6, -1) == -1){
+        if(brecv(s, buf, MESSAGELEN, -1) == -1){
             log("failed to brecv()");
-            hclose(sender);
             break;
         }
         sent++;
@@ -214,11 +221,13 @@ static void benchmark(struct ipaddr *addr, bench_opts_t *opts)
         "    Workers: %d\n"
         "Connections: %d (connections per worker: %d - %d)\n"
         "   Messages: %d (connections * %d)\n"
+        "Total Bytes: %ld (Messages * %ld bytes per message)\n"
         "--------------------------------------------------------------------------------\n",
         opts->host, opts->port,
         nproc,
         opts->nconn, pconn, pconn_last,
-        nmsg_total, opts->nmsg
+        nmsg_total, opts->nmsg,
+        nmsg_total * MESSAGELEN, MESSAGELEN
     );
 
     if(newipc(s, 10) == -1){
@@ -284,10 +293,11 @@ int main(int argc, char *argv[])
         .nconn = DEFAULT_NCONN,
         .nmsg = DEFAULT_NMSG
     };
+    size_t msglen = DEFAULT_MSGLEN;
     struct ipaddr addr;
     int opt;
 
-    while((opt = getopt(argc, argv, "w:c:m:p:")) != -1)
+    while((opt = getopt(argc, argv, "w:c:m:p:l:")) != -1)
     {
         switch(opt){
             // number of workers
@@ -307,15 +317,21 @@ int main(int argc, char *argv[])
                 opts.port = atoi(optarg);
                 break;
 
+            // message length
+            case 'l':
+                msglen = atoi(optarg);
+                break;
+
             default:
                 printf(
-                    "Usage: bench [-w nworker] [-c clients] [-m messages per client] [-p port] host\n"
+                    "Usage: bench [-w nworker] [-c clients] [-m messages per client] [-l message length] [-p port] host\n"
                     "default values\n"
-                    "      host | " TOSTR(DEFAULT_HOST) "\n"
-                    "      port | " TOSTR(DEFAULT_PORT) "\n"
-                    "   nworker | %d\n"
-                    "   clients | " TOSTR(DEFAULT_NCONN) "\n"
-                    "  messages | " TOSTR(DEFAULT_NMSG) "\n",
+                    "            host | " TOSTR(DEFAULT_HOST) "\n"
+                    "            port | " TOSTR(DEFAULT_PORT) "\n"
+                    "         nworker | %d\n"
+                    "         clients | " TOSTR(DEFAULT_NCONN) "\n"
+                    "        messages | " TOSTR(DEFAULT_NMSG) "\n"
+                    "  message length | " TOSTR(DEFAULT_MSGLEN) "\n",
                     opts.nproc
                 );
                 exit(EXIT_FAILURE);
@@ -326,10 +342,15 @@ int main(int argc, char *argv[])
         opts.host = argv[optind];
     }
 
-    if( ipaddr_remote( &addr, opts.host, opts.port, 0, -1) != 0 ){
+    MESSAGELEN = msglen;
+    if(!(MESSAGE = malloc(sizeof(char) * MESSAGELEN))){
+        term("failed to malloc()");
+    }
+    else if( ipaddr_remote( &addr, opts.host, opts.port, 0, -1) != 0 ){
         term("failed to ipaddr_remote()");
     }
 
+    memset(MESSAGE, 1, MESSAGELEN);
     benchmark(&addr, &opts);
 
     return 0;
